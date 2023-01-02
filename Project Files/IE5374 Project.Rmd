@@ -1,0 +1,454 @@
+---
+title: "IE5374 Project"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+Importing the libraries
+
+```{r}
+
+library(tidyverse)
+library(maps)
+library(viridis)
+library(caret)
+library(plyr)
+library(data.table)
+library(randomForest)
+
+```
+
+
+Importing the dataset
+
+```{r}
+
+PTR_df <- read_csv("property-tax-report Updated.csv")
+head(PTR_df)
+
+```
+
+Columns in the dataset
+
+```{r}
+
+names(PTR_df)
+
+```
+
+Omitting some columns
+
+```{r}
+
+PTR_df <- subset(PTR_df, select = -c(NARRATIVE_LEGAL_LINE1, NARRATIVE_LEGAL_LINE2, NARRATIVE_LEGAL_LINE3, NARRATIVE_LEGAL_LINE4, NARRATIVE_LEGAL_LINE5, FOLIO, ZONING_DISTRICT,LOT, PLAN, BLOCK, DISTRICT_LOT, FROM_CIVIC_NUMBER, TO_CIVIC_NUMBER, TAX_LEVY, NEIGHBOURHOOD_CODE, REPORT_YEAR, LAND_COORDINATE))
+head(PTR_df)
+
+```
+
+#####################################################################################################################################################################################
+
+EXPLORATORY DATA ANALYSIS
+
+```{r}
+
+nrow(PTR_df)
+ncol(PTR_df)
+
+
+length(unique(PTR_df$PID))
+unique(PTR_df$LEGAL_TYPE)
+
+```
+
+Summary of the dataset
+
+```{r}
+summary(PTR_df)
+```
+
+Cleaning the dataset (Replacing NULL Values with Mean/Mode values of the column)
+
+```{r}
+
+PTR_df$CURRENT_LAND_VALUE[is.na(PTR_df$CURRENT_LAND_VALUE)]<-mean(PTR_df$CURRENT_LAND_VALUE,na.rm=TRUE)
+PTR_df$CURRENT_IMPROVEMENT_VALUE[is.na(PTR_df$CURRENT_IMPROVEMENT_VALUE)]<-mean(PTR_df$CURRENT_IMPROVEMENT_VALUE,na.rm=TRUE)
+PTR_df$PREVIOUS_LAND_VALUE[is.na(PTR_df$PREVIOUS_LAND_VALUE)]<-mean(PTR_df$PREVIOUS_LAND_VALUE,na.rm=TRUE)
+PTR_df$PREVIOUS_IMPROVEMENT_VALUE[is.na(PTR_df$PREVIOUS_IMPROVEMENT_VALUE)]<-mean(PTR_df$PREVIOUS_IMPROVEMENT_VALUE,na.rm=TRUE)
+
+
+PTR_df$TAX_ASSESSMENT_YEAR[is.na(PTR_df$TAX_ASSESSMENT_YEAR)]<-mode(PTR_df$TAX_ASSESSMENT_YEAR)
+PTR_df$YEAR_BUILT[is.na(PTR_df$YEAR_BUILT)]<-mode(PTR_df$YEAR_BUILT)
+PTR_df$BIG_IMPROVEMENT_YEAR[is.na(PTR_df$BIG_IMPROVEMENT_YEAR)]<-mode(PTR_df$BIG_IMPROVEMENT_YEAR)
+
+summary(PTR_df)
+
+```
+
+
+Current Land Value of each Legal Type
+
+```{r}
+plot1 <- data.frame(PTR_df$LEGAL_TYPE, PTR_df$CURRENT_LAND_VALUE)
+plot1 <- aggregate(plot1$PTR_df.CURRENT_LAND_VALUE, by = list(Category = plot1$PTR_df.LEGAL_TYPE), FUN=sum)
+
+data <- plot1
+data <- data %>% 
+  arrange(desc(Category)) %>%
+  mutate(prop = x / sum(data$x) *100) %>%
+  mutate(ypos = cumsum(prop)- 0.5*prop )
+
+
+
+plots1 <- ggplot(data, aes(x="", y=prop, fill=Category)) +
+  geom_bar(stat="identity", width=1, color="white") +
+  coord_polar("y", start=0) +
+  theme_void() + 
+  theme(legend.position="none") +
+  
+  geom_text(aes(y = ypos, label = Category), color = "white", size=6) +
+  scale_fill_brewer(palette="Set1")
+
+png('PLOT 1 Current Land Value of each Legal Type.png')
+plots1
+dev.off()
+
+plots1
+```
+
+Current Land Value of each Zone
+
+```{r}
+
+plot2 <- data.frame(PTR_df$ZONING_CLASSIFICATION, PTR_df$CURRENT_LAND_VALUE)
+plot2 <- aggregate(plot2$PTR_df.CURRENT_LAND_VALUE, by = list(Category = plot2$PTR_df.ZONING_CLASSIFICATION), FUN=sum)
+plot2$id <- seq(1, nrow(plot2))
+
+label_data <- plot2
+number_of_bar <- nrow(label_data)
+angle <- 90 - 360 * (label_data$id-0.5) /number_of_bar     # I substract 0.5 because the letter must have the angle of the center of the bars. Not extreme right(1) or extreme left (0)
+
+label_data$hjust <- ifelse( angle < -90, 1, 0)
+label_data$angle <- ifelse(angle < -90, angle, angle-180)
+label_data <- label_data[order(label_data$x),]
+label_data$z = c(15,25,35,45,55,65,75,85,95)
+
+colorss = c("blue", "red", "black", "brown", "darkgray", "darkorchid", "indianred4", "tan3", "yellow")
+
+p <- ggplot(label_data, aes(x = as.factor(id), y = z, fill = Category)) +       # Note that id is a factor. If x is numeric, there is some space between the first bar
+  geom_bar(stat="identity", fill=alpha(colorss , 0.3)) +
+  ylim(-200,400) +
+  theme_minimal() +
+  theme(
+    axis.text = element_blank(),
+    axis.title = element_blank(),
+    panel.grid = element_blank(),
+    plot.margin = unit(rep(-2,12), "cm") 
+  ) +
+  coord_polar(start = 0) + 
+  geom_text(data=label_data, aes(x=id, y = z+10, label=Category, hjust = hjust), color="black", fontface="bold",alpha=3, size=3, angle= 0, inherit.aes = FALSE ) 
+
+png('PLOT 2 Current Land Value of each Zone.png')
+p
+dev.off()
+
+p
+
+
+```
+
+
+
+Relation Between Current Land Value and Previous Land Value for each Zone
+
+```{r}
+
+plot3 <- subset(PTR_df, select = c(ZONING_CLASSIFICATION, CURRENT_LAND_VALUE, PREVIOUS_LAND_VALUE))
+
+q = aggregate(c(plot3$CURRENT_LAND_VALUE ), by = list(plot3$ZONING_CLASSIFICATION), max)
+w = aggregate(c(plot3$PREVIOUS_LAND_VALUE), by = list(plot3$ZONING_CLASSIFICATION), max)
+
+rm(plot3)
+
+plot3 <- data.frame(ZONING_CLASSIFICATION = q$Group.1, A_PREVIOUS_LAND_VALUE = w$x, B_CURRENT_LAND_VALUE = q$x)
+plot3 <- plot3 %>% gather("Current_and_Previous", "Value", 2:3)
+plot3
+
+p3 <- plot3 %>% ggplot(aes(x = Current_and_Previous, y = Value, group = ZONING_CLASSIFICATION, color = ZONING_CLASSIFICATION)) + geom_line() + theme_classic()
+
+
+png('PLOT 3 Relation Between Current Land Value and Previous Land Value for each Zone.png')
+p3
+dev.off()
+
+p3
+
+
+```
+
+Relation Between Current Improvement Value and Previous Improvement Value
+
+```{r}
+
+plot4 <- subset(PTR_df, select = c(CURRENT_IMPROVEMENT_VALUE, PREVIOUS_IMPROVEMENT_VALUE))
+p4 <- ggplot(plot4, aes(x = CURRENT_IMPROVEMENT_VALUE, y = PREVIOUS_IMPROVEMENT_VALUE)) + geom_point() + geom_smooth(method = lm, color = "red", fill = "#69b3a2", se = TRUE) + theme_classic()
+
+png('PLOT 4 Relation Between Current Land Value and Previous Land Value for each Property.png')
+p4
+dev.off()
+
+p4
+
+```
+
+Relation between Current Land Value and Previous Land Value
+
+```{r}
+
+plot5 <- subset(PTR_df, select = c(CURRENT_LAND_VALUE, PREVIOUS_LAND_VALUE))
+p5 <- ggplot(plot5, aes(x = CURRENT_LAND_VALUE, y = PREVIOUS_LAND_VALUE)) + geom_point() + geom_smooth(method = lm, color = "blue", fill = "#69b3a2", se = TRUE) + theme_classic()
+
+
+png('PLOT 5 Relation Between Current Land Value and Previous Land Value for each Zone.png')
+p5
+dev.off()
+
+p5
+
+```
+
+Top 10 Most Expensive Streets 
+
+```{r}
+
+plot6 <- subset(PTR_df, select = c(STREET_NAME, CURRENT_LAND_VALUE))  
+plot6 <- plot6[order(-plot6$CURRENT_LAND_VALUE),][1:10,]
+plot6
+
+p6 <- ggplot(plot6, aes(x = STREET_NAME, y = CURRENT_LAND_VALUE, fill = STREET_NAME)) + geom_bar(stat = "identity") + coord_flip() + theme_classic()
+
+png('PLOT 6 Top 10 Expensive Streets of Vancouver.png')
+p6
+dev.off()
+
+p6
+
+```
+
+Top 10 Most Expensive Properties in Vancouver
+
+
+```{r}
+
+plot7 <- subset(PTR_df, select = c(PID, CURRENT_LAND_VALUE))  
+plot7 <- plot7[order(-plot6$CURRENT_LAND_VALUE),][1:10,]
+plot7
+
+p7 <- ggplot(plot7, aes(x=PID, y=CURRENT_LAND_VALUE)) +
+  geom_segment( aes(x=PID, xend=PID, y=0, yend=CURRENT_LAND_VALUE), color="grey") +
+  geom_point( color="orange", size=4) +
+  theme_light() +
+  theme(
+    panel.grid.major.x = element_blank(),
+    panel.border = element_blank(),
+    axis.ticks.x = element_blank()
+  ) +
+  xlab("PID") +
+  ylab("CURRENT_LAND_VALUE") + coord_flip()
+
+png('PLOT 7 Top 10 Most expensive Properties of Vancouver.png')
+p7
+dev.off()
+
+p7
+
+```
+
+
+
+Number of properties built in different years
+
+```{r}
+plot8 <- count(PTR_df, "YEAR_BUILT")
+plot8
+
+setnames(plot8, old = c('freq'), new = c('count'))
+
+data <- plot8
+
+# Compute percentages
+data$fraction = data$count / sum(data$count)
+
+# Compute the cumulative percentages (top of each rectangle)
+data$ymax = cumsum(data$fraction)
+
+# Compute the bottom of each rectangle
+data$ymin = c(0, head(data$ymax, n=-1))
+ 
+# Make the plot
+p8 <- ggplot(data, aes(ymax=ymax, ymin=ymin, xmax=4, xmin=3, fill=YEAR_BUILT)) +
+     geom_rect() +
+     coord_polar(theta="y") + # Try to remove that to understand how the chart is built initially
+     xlim(c(2, 4)) # Try to remove that to see how to make a pie chart
+
+png('PLOT 8 Recency of Properties of Vancouver.png')
+p8
+dev.off()
+
+p8
+
+
+
+```
+
+
+#####################################################################################################################################################################################
+
+MULTIPLE LINEAR REGRESSION
+
+Multiple Linear  Regression to learn the pattern between previous land value and current land value to predict the future land value (Value of the land in 5 years) using features PID, zone classification, Street name, previous land value, current land value, year built.
+
+
+Using the Previous land value, previous improvement value, year built to train and predict the current land value of the property.
+Using the same model to predict the future land value.
+
+Big improvement was not contributing to the model
+
+Building the model
+
+```{r}
+
+PTR_df$YEAR_BUILT <- as.numeric(PTR_df$YEAR_BUILT)
+PTR_df$BIG_IMPROVEMENT_YEAR <- as.numeric(PTR_df$BIG_IMPROVEMENT_YEAR)
+
+df_for_pred <- subset(PTR_df, select = c(PREVIOUS_LAND_VALUE, PREVIOUS_IMPROVEMENT_VALUE, YEAR_BUILT, CURRENT_LAND_VALUE))[10:91,]
+df_for_pred <- na.omit(df_for_pred)
+
+df_for_pred$PID <- c(1:64)
+df_CURRENT_LAND_VALUE <- subset(df_for_pred, select = CURRENT_LAND_VALUE)
+
+model <- lm(df_for_pred$CURRENT_LAND_VALUE ~ df_for_pred$PID + df_for_pred$PREVIOUS_IMPROVEMENT_VALUE + df_for_pred$PREVIOUS_IMPROVEMENT_VALUE + df_for_pred$YEAR_BUILT)
+
+cor(df_for_pred)
+
+df_test <- df_for_pred$CURRENT_LAND_VALUE
+
+df_for_pred <- subset(df_for_pred, select = -CURRENT_LAND_VALUE)
+df_for_pred$prediction <- model %>% predict(df_for_pred)
+
+head(df_for_pred$prediction)
+head(df_test)
+
+```
+
+Summary of the model
+
+```{r}
+
+summary(model)
+
+```
+
+
+
+Using Random Forest to train our model
+
+```{r}
+
+df_rf_pred <- subset(PTR_df, select = c(PREVIOUS_LAND_VALUE, PREVIOUS_IMPROVEMENT_VALUE, YEAR_BUILT, CURRENT_LAND_VALUE))[10:91,]
+df_rf_pred <- na.omit(df_rf_pred)
+df_rf_pred
+
+df_rf_pred$PID <- c(1:64)
+df_CURRENT_LAND_VALUE_rf <- subset(df_rf_pred, select = CURRENT_LAND_VALUE)
+
+rf <- randomForest(df_rf_pred$CURRENT_LAND_VALUE ~ df_rf_pred$PID + df_rf_pred$PREVIOUS_IMPROVEMENT_VALUE + df_rf_pred$PREVIOUS_IMPROVEMENT_VALUE + df_rf_pred$YEAR_BUILT, proximity = TRUE)
+
+cor(df_rf_pred)
+
+df_test_rf <- df_rf_pred$CURRENT_LAND_VALUE
+
+df_rf_pred <- subset(df_rf_pred, select = -CURRENT_LAND_VALUE)
+
+df_rf_pred$prediction <- rf %>% predict(df_rf_pred)
+
+head(df_rf_pred$prediction)
+head(df_test_rf)
+
+testing <- data.frame(PID = df_rf_pred$PID, CURRENT_LAND_VALUE = df_test_rf)
+
+R2(df_test_rf, df_rf_pred$prediction)
+
+```
+Graph for future land Value 
+
+```{r}
+
+df_rf_pred_1 <- subset(PTR_df, select = c(CURRENT_LAND_VALUE, CURRENT_IMPROVEMENT_VALUE, YEAR_BUILT))[10:91,]
+df_rf_pred_1 <- na.omit(df_rf_pred_1)
+
+names(df_rf_pred_1)[1] ="PREVIOUS_LAND_VALUE"
+names(df_rf_pred_1)[2] ="PREVIOUS_IMPROVEMENT_VALUE"
+
+df_rf_pred_1$prediction <- rf %>% predict(df_rf_pred_1)
+df_rf_pred_1$PID <- c(1:64)
+df_rf_pred_1 <- subset(df_rf_pred_1, select = c(prediction, PID, PREVIOUS_LAND_VALUE))
+
+ggplot() + geom_line(data = testing, aes(x = PID, y = CURRENT_LAND_VALUE), color = "blue") + geom_line(data = df_rf_pred_1, aes(x = PID, y = prediction), color = "red") + theme_classic() + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) 
+
+```
+
+```{r}
+
+df_rf_pred_improvement <- subset(PTR_df, select = c(PREVIOUS_IMPROVEMENT_VALUE, BIG_IMPROVEMENT_YEAR, YEAR_BUILT, CURRENT_IMPROVEMENT_VALUE))[10:91,]
+df_rf_pred_improvement <- na.omit(df_rf_pred_improvement)
+df_rf_pred_improvement
+
+rf_1 <- randomForest(df_rf_pred_improvement$CURRENT_IMPROVEMENT_VALUE ~ df_rf_pred_improvement$PREVIOUS_IMPROVEMENT_VALUE + df_rf_pred_improvement$BIG_IMPROVEMENT_YEAR + df_rf_pred_improvement$YEAR_BUILT, proximity = TRUE)
+
+cor(df_rf_pred_improvement)
+
+df_rf_pred_improvement_current <- df_rf_pred_improvement$CURRENT_IMPROVEMENT_VALUE
+
+df_rf_pred_improvement <- subset(df_rf_pred_improvement, select = -CURRENT_IMPROVEMENT_VALUE)
+df_rf_pred_improvement
+
+df_rf_pred_improvement$prediction <- rf_1 %>% predict(df_rf_pred_improvement)
+df_rf_pred_improvement
+
+head(df_rf_pred_improvement$prediction)
+head(df_rf_pred_improvement_current)
+
+testing <- data.frame(Current_improvement_Value = df_rf_pred_improvement_current, Prediction = df_rf_pred_improvement$prediction)
+testing
+
+R2(testing$Current_improvement_Value, testing$Prediction)
+
+
+```
+
+Graph for future Improvement Value 
+
+```{r}
+
+testing$PID <- c(1:64)
+
+df_rf_pred_improvement_1 <- subset(PTR_df, select = c(BIG_IMPROVEMENT_YEAR, YEAR_BUILT, CURRENT_IMPROVEMENT_VALUE))[10:91,]
+df_rf_pred_improvement_1 <- na.omit(df_rf_pred_improvement_1)
+names(df_rf_pred_improvement_1)[3] ="PREVIOUS_IMPROVEMENT_VALUE"
+
+df_rf_pred_improvement_1$prediction <- rf_1 %>% predict(df_rf_pred_improvement_1)
+df_rf_pred_improvement_1$PID <- c(1:64)
+df_rf_pred_improvement_1 <- subset(df_rf_pred_improvement_1, select = c(prediction, PID, PREVIOUS_IMPROVEMENT_VALUE))
+
+
+ggplot() + geom_line(data = testing, aes(x = PID, y = Current_improvement_Value), color = "blue") + geom_line(data = df_rf_pred_improvement_1, aes(x = PID, y = prediction), color = "red") + theme_classic() + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)) 
+
+```
+
+
+#####################################################################################################################################################################################
+
